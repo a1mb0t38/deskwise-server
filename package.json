@@ -1,0 +1,25 @@
+{
+  "name": "deskwise-server",
+  "version": "1.0.0",
+  "description": "",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "better-auth": "^1.7.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mongoose": "^9.9.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
