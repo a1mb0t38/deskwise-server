@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import mongoose from 'mongoose';
 
 const app = express();
 app.use(cors({
@@ -14,6 +15,18 @@ app.get('/', (req, res) => {
     res.send("server is running");
 })
 
-app.listen(PORT, ()=>{
-    console.log(`Server is running on port ${PORT}`);
-})
+async function startServer(){
+    try{
+        await mongoose.connect(process.env.MONGODB_URI);
+        console.log("Connected to MongoDB");
+        app.listen(PORT, ()=>{
+            console.log(`Server is running on port ${PORT}`);
+        })
+
+    }catch(err){
+        console.error("Faild to connect to MongoDB", err.message)
+        process.exit(1);
+    }
+}
+
+startServer();
