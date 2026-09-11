@@ -1,7 +1,10 @@
-const {auth} = require("../auth");
+const {auth} = require('../auth');
+const { fromNodeHeaders } = require("better-auth/node");
 
 async function requireAuth(req, res, next){
-    const session = await auth.api.getSession({headers: req.headers});
+    const session = await auth.api.getSession({
+    headers: fromNodeHeaders(req.headers),
+  });
 
     if(!session){
         return res.status(401).json({message: "Unauthorized"})

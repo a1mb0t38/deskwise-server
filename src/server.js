@@ -9,6 +9,9 @@ app.use(cors({
     credentials: true
 }));
 
+const profileRoutes = require('./routes/profile');
+app.use("/api/profile", profileRoutes);
+
 const PORT = process.env.PORT || 5000;
 
 app.get('/', (req, res) => {
