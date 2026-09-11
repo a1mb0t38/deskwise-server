@@ -1,16 +1,15 @@
-const {auth} = require('../auth');
-const { fromNodeHeaders } = require("better-auth/node");
+import { auth } from '../auth.js';
+import { fromNodeHeaders } from "better-auth/node";
 
-async function requireAuth(req, res, next){
-    const session = await auth.api.getSession({
+export async function requireAuth(req, res, next) {
+  const session = await auth.api.getSession({
     headers: fromNodeHeaders(req.headers),
   });
 
-    if(!session){
-        return res.status(401).json({message: "Unauthorized"})
-    }
-    req.user = session.user;
-    next();
-}
+  if (!session) {
+    return res.status(401).json({ error: "Not authenticated" });
+  }
 
-module.exports = requireAuth;
+  req.user = session.user;
+  next();
+}

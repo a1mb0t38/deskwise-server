@@ -1,30 +1,31 @@
-const express = require('express');
-const Profile = require('../models/profile');
-const {requireAuth} = require('../middleware/requireAuth');
+import express from "express";
+import Profile from "../models/profile.js";
+import { requireAuth } from "../middleware/requireAuth.js";
 
 const router = express.Router();
 
-router.post("/complete", requireAuth, async (req, res) => {
-    try{
-        const userId = req.user.id;
-        const {role, department} = req.body;
+// VULNERABLE: trusts client-supplied `role` with no validation.
+router.post("/complete", requireAuth, async (req, res) => {pp
+  try {
+    const userId = req.user.id;
+    const { role, department } = req.body;
 
-        const existing = await Profile.findOne({userId});
-        if(existing){
-            return res.status(409).json({message: "Profile already exists"});
-        }
-
-        const profile = new Profile({
-            userId,
-            role,
-            department
-        });
-
-        res.status(201).json(profile);
-    }catch(err){
-        console.error("Profile creation Error", err.message);
-        res.status(500).json({message: "intternal server error"});
+    const existing = await Profile.findOne({ userId });
+    if (existing) {
+      return res.status(409).json({ error: "Profile already exists" });
     }
-})
 
-module.exports = router;
+    const profile = await Profile.create({
+      userId,
+      role, // <-- unguarded, this is the vuln
+      department,
+    });
+
+    res.status(201).json(profile);
+  } catch (err) {
+    console.error("Profile creation error:", err);
+    res.status(500).json({ error: "Failed to create profile" });
+  }
+});
+
+export default router;
