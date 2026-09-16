@@ -1,6 +1,7 @@
 import express from "express";
 import Profile from "../models/profile.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import requireAdmin from "../middleware/requireAdmin.js";
 
 const router = express.Router();
 
@@ -28,6 +29,35 @@ router.post("/complete", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("Profile creation error:", err);
     res.status(500).json({ error: "Failed to create profile" });
+  }
+});
+
+router.patch("/promote", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { userId, role } = req.body;
+
+    if (!userId || !role) {
+      return res.status(400).json({ error: "userId and role are required" });
+    }
+
+    if (!["user", "agent", "admin"].includes(role)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
+
+    const profile = await Profile.findOneAndUpdate(
+      { userId },
+      { role },
+      { new: true }
+    );
+
+    if (!profile) {
+      return res.status(404).json({ error: "Profile not found" });
+    }
+
+    return res.json(profile);
+  } catch (err) {
+    console.error("Error promoting user:", err);
+    return res.status(500).json({ error: "Failed to promote user" });
   }
 });
 
