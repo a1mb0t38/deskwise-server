@@ -1,4 +1,4 @@
-import Profile from "../models/profile.js";
+import Profile from "../models/Profile.js";
 
 /**
  * requireAdmin

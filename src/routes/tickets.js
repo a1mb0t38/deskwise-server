@@ -1,7 +1,11 @@
 import express from "express";
+import mongoose from "mongoose";
+import crypto from "crypto";
 import Ticket from "../models/Ticket.js";
-import Profile from "../models/profile.js";
-import requireAuth from "../middleware/requireAuth.js";
+import Profile from "../models/Profile.js";
+import { requireAuth } from "../middleware/requireAuth.js";
+import { VULN_MODES } from "../config/vulnModes.js";
+import { FLAG_REGISTRY } from "../config/flags.js";
 
 const router = express.Router();
 
@@ -10,7 +14,9 @@ async function getCallerProfile(userId) {
   return Profile.findOne({ userId });
 }
 
-// POST /api/tickets — create a ticket (any authenticated user)
+/**
+ * POST /api/tickets — create a ticket (any authenticated user)
+ */
 router.post("/", requireAuth, async (req, res) => {
   try {
     const { title, description, priority } = req.body;
@@ -33,7 +39,100 @@ router.post("/", requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/tickets — list tickets, scoped by role
+/**
+ * GET /api/tickets/search — Search tickets
+ *
+ * VULNERABILITY (A05 — Injection / NoSQL Injection, CWE-943):
+ * When VULN_MODES.NOSQL_INJECTION is "vulnerable", req.query is passed directly
+ * into Ticket.find() without sanitization. Passing Mongo operators like `?title[$ne]=null`
+ * allows attackers to bypass search criteria and retrieve all tickets (including seeded flag tickets).
+ *
+ * Exploit:
+ *   GET /api/tickets/search?title[$ne]=null
+ *   Returns all tickets, including the hidden ticket with INJECT{m0ng0_0p3r4t0r_byp4ss}.
+ */
+router.get("/search", requireAuth, async (req, res) => {
+  try {
+    let query = {};
+
+    if (VULN_MODES.NOSQL_INJECTION === "vulnerable") {
+      // VULNERABLE: Direct query assignment without type checking / sanitization
+      query = req.query;
+    } else {
+      // PATCHED: Enforce string type to prevent Mongo operator injection
+      if (req.query.title) {
+        query.title = String(req.query.title);
+      }
+      if (req.query.status) {
+        query.status = String(req.query.status);
+      }
+    }
+
+    const tickets = await Ticket.find(query);
+    return res.json(tickets);
+  } catch (err) {
+    console.error("Search error:", err);
+    return res.status(500).json({ error: "Search failed" });
+  }
+});
+
+/**
+ * POST /api/tickets/import — Bulk ticket import endpoint
+ *
+ * VULNERABILITY (A08 — Software and Data Integrity Failures, CWE-345):
+ * When VULN_MODES.INTEGRITY_FAIL is "vulnerable", the server accepts JSON payloads
+ * with `verified: true` without validating any HMAC signature. An attacker can submit
+ * a forged import payload claiming to be verified.
+ *
+ * Exploit:
+ *   POST /api/tickets/import
+ *   Body: { "verified": true, "title": "Forged Ticket", "description": "test" }
+ *   Returns INTEGRITYFAIL{no_hmac_4ny0ne_c4n_f0rge_imports}
+ */
+router.post("/import", requireAuth, async (req, res) => {
+  try {
+    const { title, description, verified } = req.body;
+
+    if (VULN_MODES.INTEGRITY_FAIL === "vulnerable") {
+      // VULNERABLE: Blindly trust `verified` flag in payload without signature verification
+      if (verified === true) {
+        const flagInfo = FLAG_REGISTRY.INTEGRITY_FAIL;
+        return res.status(200).json({
+          message: "Import accepted (Integrity Check Bypassed)",
+          flag: flagInfo.flag,
+          vuln: flagInfo.name,
+        });
+      }
+    } else {
+      // PATCHED: Require HMAC signature header verification
+      const signature = req.headers["x-signature"];
+      const secret = process.env.IMPORT_HMAC_SECRET || "supersecrethmackey123";
+      const expectedSignature = crypto
+        .createHmac("sha256", secret)
+        .update(JSON.stringify(req.body))
+        .digest("hex");
+
+      if (!signature || signature !== expectedSignature) {
+        return res.status(401).json({ error: "Invalid or missing payload signature" });
+      }
+    }
+
+    const ticket = await Ticket.create({
+      title: title || "Imported Ticket",
+      description: description || "Imported via integration API",
+      createdBy: req.user.id,
+    });
+
+    return res.status(201).json({ message: "Import successful", ticket });
+  } catch (err) {
+    console.error("Import error:", err);
+    return res.status(500).json({ error: "Import failed" });
+  }
+});
+
+/**
+ * GET /api/tickets — list tickets, scoped by role
+ */
 router.get("/", requireAuth, async (req, res) => {
   try {
     const profile = await getCallerProfile(req.user.id);
@@ -50,20 +149,62 @@ router.get("/", requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/tickets/:id — get a single ticket, scoped by role
+/**
+ * GET /api/tickets/:id — get a single ticket
+ *
+ * VULNERABILITY (A01 — BOLA / IDOR, CWE-639) & (A10 — Exceptional Conditions Fail-Open, CWE-703):
+ *
+ * BOLA (A01):
+ * When VULN_MODES.IDOR_TICKETS is "vulnerable", ticket access checks are bypassed. Any user
+ * can fetch any ticket by ID. Accessing the seeded admin flag ticket reveals IDOR{...}.
+ *
+ * Exceptional Conditions (A10):
+ * If a malformed ID (e.g. invalid ObjectId format like "invalid-id-format") is passed,
+ * an error occurs during lookup. In vulnerable mode, the catch block FAILS OPEN:
+ * instead of returning 400 Bad Request or 403, it catches the error and grants access / returns
+ * the EXCEPTFAIL{...} flag!
+ */
 router.get("/:id", requireAuth, async (req, res) => {
+  const { id } = req.params;
+
+  // A10: Exception handling check
+  if (VULN_MODES.EXCEPT_FAIL === "vulnerable") {
+    try {
+      // Validate ObjectId explicitly inside try block
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw new Error("Invalid ObjectId format passed to ticket lookup");
+      }
+    } catch (err) {
+      // VULNERABLE FAIL-OPEN: The catch block fails OPEN instead of returning 400/403!
+      console.warn("Auth/validation error caught, failing open:", err.message);
+      const flagInfo = FLAG_REGISTRY.EXCEPT_FAIL;
+      return res.status(200).json({
+        message: "Exception handled (Fails Open Granted Access)",
+        flag: flagInfo.flag,
+        vuln: flagInfo.name,
+      });
+    }
+  }
+
   try {
-    const ticket = await Ticket.findById(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid ticket ID format" });
+    }
+
+    const ticket = await Ticket.findById(id);
     if (!ticket) {
       return res.status(404).json({ error: "Ticket not found" });
     }
 
-    const profile = await getCallerProfile(req.user.id);
-    const isStaff = profile && (profile.role === "agent" || profile.role === "admin");
-    const isOwner = ticket.createdBy.toString() === req.user.id;
+    // A01: BOLA / IDOR Check
+    if (VULN_MODES.IDOR_TICKETS === "patched") {
+      const profile = await getCallerProfile(req.user.id);
+      const isStaff = profile && (profile.role === "agent" || profile.role === "admin");
+      const isOwner = ticket.createdBy.toString() === req.user.id;
 
-    if (!isStaff && !isOwner) {
-      return res.status(403).json({ error: "Forbidden" });
+      if (!isStaff && !isOwner) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
     }
 
     return res.json(ticket);
@@ -73,7 +214,9 @@ router.get("/:id", requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/tickets/:id — update status/priority/assignment (agent/admin only)
+/**
+ * PATCH /api/tickets/:id — update status/priority/assignment (agent/admin only)
+ */
 router.patch("/:id", requireAuth, async (req, res) => {
   try {
     const profile = await getCallerProfile(req.user.id);
@@ -105,7 +248,9 @@ router.patch("/:id", requireAuth, async (req, res) => {
   }
 });
 
-// DELETE /api/tickets/:id — admin only
+/**
+ * DELETE /api/tickets/:id — admin only
+ */
 router.delete("/:id", requireAuth, async (req, res) => {
   try {
     const profile = await getCallerProfile(req.user.id);
