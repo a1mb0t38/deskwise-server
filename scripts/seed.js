@@ -9,11 +9,20 @@ import crypto from 'crypto';
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/deskwise';
 
-async function seed() {
+export async function seed(force = true) {
   try {
-    console.log('Connecting to MongoDB for seeding...');
-    await mongoose.connect(MONGODB_URI);
+    const isConnected = mongoose.connection.readyState === 1;
+    if (!isConnected) {
+      console.log('Connecting to MongoDB for seeding...');
+      await mongoose.connect(MONGODB_URI);
+    }
     const db = mongoose.connection.db;
+
+    const userCount = await db.collection('user').countDocuments();
+    if (!force && userCount > 0) {
+      console.log('Database already populated. Skipping auto-seed.');
+      return;
+    }
 
     console.log('Clearing existing database collections...');
     await db.collection('user').deleteMany({});
@@ -211,12 +220,12 @@ async function seed() {
     console.log('Weak account:       weakuser@deskwise.local / password123');
     console.log(`BOLA Ticket ID:     ${adminTicket._id}`);
     console.log('---------------------\n');
-
-    process.exit(0);
   } catch (err) {
     console.error('Seeding failed:', err);
-    process.exit(1);
   }
 }
 
-seed();
+// Execute directly if script run via CLI
+if (process.argv[1]?.endsWith('seed.js')) {
+  seed(true).then(() => process.exit(0));
+}

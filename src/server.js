@@ -5,6 +5,7 @@ import mongoose from 'mongoose';
 import { toNodeHandler } from 'better-auth/node';
 import { auth } from './auth.js';
 import { VULN_MODES } from './config/vulnModes.js';
+import { seed } from '../scripts/seed.js';
 
 import profileRoutes from './routes/profile.js';
 import ticketRoutes from './routes/tickets.js';
@@ -67,6 +68,10 @@ async function startServer(){
     try {
         await mongoose.connect(process.env.MONGODB_URI);
         console.log("Connected to MongoDB");
+
+        // Automatically seed database on first run if empty
+        await seed(false);
+
         app.listen(PORT, ()=>{
             console.log(`Server is running on port ${PORT}`);
         });
